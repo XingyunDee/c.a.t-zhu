@@ -1,0 +1,240 @@
+--// SERVICES
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local VirtualUser = game:GetService("VirtualUser")
+local HttpService = game:GetService("HttpService")
+
+local player = Players.LocalPlayer
+
+--// REMOTES
+local Remotes = ReplicatedStorage:WaitForChild("Remotes")
+local CatchRemote = Remotes:WaitForChild("CatchAnimal")
+local BuyFoodRemote = Remotes:WaitForChild("BuyFood")
+local PlaceEggRemote = Remotes:WaitForChild("PlaceEgg")
+local HatchEggRemote = Remotes:WaitForChild("HatchEgg")
+local BuyMerchRemote = Remotes:WaitForChild("BuyMerch")
+local SellPetRemote = Remotes:WaitForChild("SellPet")
+
+--// FILE
+local FileName = "CatchTameSettings.json"
+
+--// STATE
+local State = {
+    AutoCatch = false,
+    AutoTeleport = false,
+    AutoBuyFood = false,
+    AutoPlaceEgg = false,
+    AutoHatch = false,
+    AutoBuyMerch = false,
+    AutoSell = false,
+    CatchTier = "All",
+    SellTier = "All",
+    KeepBest = true
+}
+
+--// SAVE / LOAD
+local function Save()
+    if writefile then
+        writefile(FileName, HttpService:JSONEncode(State))
+    end
+end
+
+local function Load()
+    if readfile and isfile and isfile(FileName) then
+        local data = HttpService:JSONDecode(readfile(FileName))
+        for k,v in pairs(data) do
+            State[k] = v
+        end
+    end
+end
+
+Load()
+
+--// ANTI AFK
+player.Idled:Connect(function()
+    VirtualUser:Button2Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+    task.wait(1)
+    VirtualUser:Button2Up(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+end)
+
+--// GUI
+local ScreenGui = Instance.new("ScreenGui", game.CoreGui)
+local Frame = Instance.new("Frame", ScreenGui)
+Frame.Size = UDim2.new(0, 280, 0, 460)
+Frame.Position = UDim2.new(0, 20, 0.3, 0)
+Frame.BackgroundColor3 = Color3.fromRGB(25,25,25)
+Frame.Active = true
+Frame.Draggable = true
+
+local UIList = Instance.new("UIListLayout", Frame)
+UIList.Padding = UDim.new(0,5)
+
+--// TOGGLE
+local function createToggle(name, key)
+    local Btn = Instance.new("TextButton", Frame)
+    Btn.Size = UDim2.new(1, -10, 0, 40)
+    Btn.BackgroundColor3 = Color3.fromRGB(40,40,40)
+    Btn.TextColor3 = Color3.new(1,1,1)
+
+    local function update()
+        Btn.Text = name .. " : " .. (State[key] and "ON" or "OFF")
+    end
+
+    update()
+
+    Btn.MouseButton1Click:Connect(function()
+        State[key] = not State[key]
+        update()
+        Save()
+    end)
+end
+
+--// TIER SELECTOR
+local tiers = {"All","Common","Rare","Epic","Legendary"}
+
+local function createTier(label, key)
+    local Btn = Instance.new("TextButton", Frame)
+    Btn.Size = UDim2.new(1, -10, 0, 40)
+    Btn.BackgroundColor3 = Color3.fromRGB(60,60,60)
+    Btn.TextColor3 = Color3.new(1,1,1)
+
+    local index = table.find(tiers, State[key]) or 1
+
+    local function update()
+        Btn.Text = label .. " : " .. tiers[index]
+        State[key] = tiers[index]
+        Save()
+    end
+
+    update()
+
+    Btn.MouseButton1Click:Connect(function()
+        index = index + 1
+        if index > #tiers then index = 1 end
+        update()
+    end)
+end
+
+--// UI
+createTier("Catch Tier", "CatchTier")
+createTier("Sell Tier", "SellTier")
+
+createToggle("Auto Catch", "AutoCatch")
+createToggle("Auto Teleport", "AutoTeleport")
+createToggle("Auto Sell", "AutoSell")
+createToggle("Keep Best Pet", "KeepBest")
+
+createToggle("Auto Buy Food", "AutoBuyFood")
+createToggle("Auto Place Egg", "AutoPlaceEgg")
+createToggle("Auto Hatch Egg", "AutoHatch")
+createToggle("Auto Buy Merch", "AutoBuyMerch")
+
+--// FUNCTIONS
+
+local function matchTier(obj, selected)
+    if selected == "All" then return true end
+    local tier = obj:FindFirstChild("Tier")
+    return tier and tier.Value == selected
+end
+
+-- Cari pet terbaik (berdasarkan Power)
+local function getBestPet()
+    local pets = player:WaitForChild("Pets"):GetChildren()
+    local best = nil
+    local highest = 0
+
+    for _, pet in pairs(pets) do
+        local power = pet:FindFirstChild("Power")
+        if power and power.Value > highest then
+            highest = power.Value
+            best = pet
+        end
+    end
+
+    return best
+end
+
+-- TELEPORT
+local function teleportTo(target)
+    local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+    if hrp and target:FindFirstChild("HumanoidRootPart") then
+        hrp.CFrame = target.HumanoidRootPart.CFrame + Vector3.new(0,3,0)
+    end
+end
+
+--// LOOPS
+
+-- Auto Catch + Teleport
+task.spawn(function()
+    while true do
+        if State.AutoCatch then
+            for _, animal in pairs(workspace:WaitForChild("Animals"):GetChildren()) do
+                if animal:FindFirstChild("HumanoidRootPart") and matchTier(animal, State.CatchTier) then
+                    
+                    if State.AutoTeleport then
+                        teleportTo(animal)
+                        task.wait(0.2)
+                    end
+
+                    CatchRemote:FireServer(animal)
+                    task.wait(0.4)
+                end
+            end
+        end
+        task.wait(1)
+    end
+end)
+
+-- Auto Sell + Keep Best
+task.spawn(function()
+    while true do
+        if State.AutoSell then
+            local bestPet = State.KeepBest and getBestPet()
+
+            for _, pet in pairs(player:WaitForChild("Pets"):GetChildren()) do
+                if pet ~= bestPet and matchTier(pet, State.SellTier) then
+                    SellPetRemote:FireServer(pet)
+                    task.wait(0.3)
+                end
+            end
+        end
+        task.wait(5)
+    end
+end)
+
+-- Loop lain tetap sama
+task.spawn(function()
+    while true do
+        if State.AutoBuyFood then
+            BuyFoodRemote:FireServer("BasicFood", 10)
+        end
+        task.wait(5)
+    end
+end)
+
+task.spawn(function()
+    while true do
+        if State.AutoPlaceEgg then
+            PlaceEggRemote:FireServer("CommonEgg")
+        end
+        task.wait(3)
+    end
+end)
+
+task.spawn(function()
+    while true do
+        if State.AutoHatch then
+            HatchEggRemote:FireServer()
+        end
+        task.wait(2)
+    end
+end)
+
+task.spawn(function()
+    while true do
+        if State.AutoBuyMerch then
+            BuyMerchRemote:FireServer("PetSkin")
+        end
+        task.wait(10)
+    end
+end)
